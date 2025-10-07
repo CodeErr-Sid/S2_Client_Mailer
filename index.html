@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Invoice Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 30px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background: #007bff; color: white; }
+    #uploadTime { font-weight: bold; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Invoice Tracker</h2>
+  <input type="file" id="fileInput" accept=".xlsx,.xls" />
+  <button id="uploadBtn">Upload & View</button>
+  <div id="uploadTime"></div>
+  <div id="tableContainer"></div>
+
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const tableContainer = document.getElementById("tableContainer");
+    const uploadTime = document.getElementById("uploadTime");
+
+    // Load saved data from localStorage if available
+    window.onload = () => {
+      const savedData = localStorage.getItem("lastSheet");
+      const savedTime = localStorage.getItem("lastUploadTime");
+      if (savedData) {
+        renderTable(JSON.parse(savedData));
+        if (savedTime) uploadTime.textContent = `Last uploaded: ${savedTime}`;
+      }
+    };
+
+    uploadBtn.addEventListener("click", () => {
+      const file = fileInput.files[0];
+      if (!file) {
+        alert("Please select an Excel file first.");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+
+        // Save in localStorage
+        localStorage.setItem("lastSheet", JSON.stringify(jsonData));
+        const now = new Date().toLocaleString();
+        localStorage.setItem("lastUploadTime", now);
+        uploadTime.textContent = `Last uploaded: ${now}`;
+
+        renderTable(jsonData);
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    function renderTable(data) {
+      if (!data || data.length === 0) {
+        tableContainer.innerHTML = "<p>No data found.</p>";
+        return;
+      }
+
+      let tableHTML = "<table><thead><tr>";
+      Object.keys(data[0]).forEach((key) => {
+        tableHTML += `<th>${key}</th>`;
+      });
+      tableHTML += "</tr></thead><tbody>";
+
+      data.forEach((row) => {
+        tableHTML += "<tr>";
+        Object.values(row).forEach((value) => {
+          tableHTML += `<td>${value ?? ""}</td>`;
+        });
+        tableHTML += "</tr>";
+      });
+
+      tableHTML += "</tbody></table>";
+      tableContainer.innerHTML = tableHTML;
+    }
+  </script>
+</body>
+</html>
