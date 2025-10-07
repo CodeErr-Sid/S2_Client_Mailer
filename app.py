@@ -16,6 +16,12 @@ DATA_FILE = os.path.join(DATA_FOLDER, "last_uploaded.xlsx")
 TIME_FILE = os.path.join(DATA_FOLDER, "upload_time.txt")
 CREDENTIALS_FILE = os.path.join(DATA_FOLDER, "sender_credentials.txt")
 
+# change by sid
+
+sender_email = st.secrets["sender_email"]
+sender_password = st.secrets["sender_password"]
+
+
 # --- Session State Defaults ---
 if "sender_email" not in st.session_state:
     st.session_state.sender_email = ""
