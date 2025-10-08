@@ -1,9 +1,79 @@
 import streamlit as st
 import pandas as pd
 import os
+from pathlib import Path
+import hashlib
 from datetime import datetime
 import smtplib
 from email.message import EmailMessage
+
+# --- CONFIG ---
+st.set_page_config(page_title="S2 Client Recievable's", page_icon="🔒", layout="centered")
+
+# --- STYLE ---
+st.markdown("""
+    <style>
+    body {
+        background-color: #0d1117;
+        color: white;
+        font-family: 'Montserrat', sans-serif;
+    }
+    .stApp {
+        background-color: #0d1117;
+    }
+    .login-logo {
+        width: 90px;
+        height: auto;
+        margin-bottom: 1rem;
+        border-radius: 50%;
+        box-shadow: 0 0 15px rgba(0, 193, 110, 0.3);
+    }
+    .login-title {
+        font-size: 1.8rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: #f1f1f1;
+    }
+    .stTextInput>div>div>input {
+        background-color: #0d1117;
+        color: #f1f1f1;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+    }
+
+    </style>
+""", unsafe_allow_html=True)
+
+# --- PASSWORD HASH ---
+HASHED_PASSWORD = "1d493066e5f3f142eb6c9efae9511745afbc03286e64ae192c3ef0b420cd9019"
+
+def check_password(input_password):
+    hashed_input = hashlib.sha256(input_password.encode()).hexdigest()
+    return hashed_input == HASHED_PASSWORD
+
+# --- LOGO PATH ---
+logo_path = Path(__file__).parent / "assets" / "s2logo.png"
+
+# --- LOGIN LOGIC ---
+if "logged_in" not in st.session_state:
+    with st.container():
+        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+
+        # ✅ Display Local Image
+        st.image(str(logo_path), width=90, use_container_width=False)
+
+        st.markdown('<div class="login-title">🔐 Login to Continue!</div>', unsafe_allow_html=True)
+        password = st.text_input("Enter Password", type="password", label_visibility="collapsed")
+        st.write("")  # spacing
+
+        if st.button("Login"):
+            if check_password(password):
+                st.session_state.logged_in = True
+                st.rerun()
+            else:
+                st.error("❌ Incorrect password. Please try again.")
+        st.markdown('</div>', unsafe_allow_html=True)
+    st.stop()
 
 # --- Page Config ---
 st.set_page_config(page_title="Invoice Tracker", layout="wide")
@@ -104,13 +174,13 @@ if uploaded_file:
     st.success("✅ File uploaded and saved successfully!")
 
 # --- Refresh Button ---
-if st.button("🔄 Refresh Data"):
-    if os.path.exists(DATA_FILE):
-        df = pd.read_excel(DATA_FILE)
-        st.session_state.stored_data = df
-        st.success("✅ Data refreshed successfully!")
-    else:
-        st.warning("⚠️ No saved file found to refresh!")
+# if st.button("🔄 Refresh Data"):
+#     if os.path.exists(DATA_FILE):
+#         df = pd.read_excel(DATA_FILE)
+#         st.session_state.stored_data = df
+#         st.success("✅ Data refreshed successfully!")
+#     else:
+#         st.warning("⚠️ No saved file found to refresh!")
 
 # --- Main Dashboard ---
 if st.session_state.stored_data is not None:
@@ -147,21 +217,60 @@ if st.session_state.stored_data is not None:
     col4.metric("⚠️ Pending", len(unpaid_df))
     col5.metric("💰 Total Due", unpaid_df[amount_col].sum() if amount_col else 0)
 
-    # --- Ageing Table & Graph ---
-    if unpaid_df.shape[0] > 0 and date_col:
-        ageing_df = unpaid_df.copy()
-        ageing_df[date_col] = pd.to_datetime(ageing_df[date_col], errors="coerce")
-        ageing_df["Days Pending"] = (datetime.now() - ageing_df[date_col]).dt.days
+import plotly.express as px
 
-        # Display table
-        st.markdown("### ⏳ Ageing Table")
-        st.dataframe(ageing_df[[client_col, invoice_col, amount_col, date_col, "Days Pending"]])
+# --- Ageing Table & Graph ---
+if unpaid_df.shape[0] > 0 and date_col:
+    ageing_df = unpaid_df.copy()
+    ageing_df[date_col] = pd.to_datetime(ageing_df[date_col], errors="coerce")
+    ageing_df["Days Pending"] = (datetime.now() - ageing_df[date_col]).dt.days
 
-        # Display bar chart
-        st.markdown("### 📊 Ageing Graph")
-        chart_df = ageing_df.copy()
-        chart_df[invoice_col] = chart_df[invoice_col].astype(str)  # Ensure invoice numbers are strings
-        st.bar_chart(data=chart_df.set_index(invoice_col)["Days Pending"])
+    # Display table
+    st.markdown("### ⏳ Ageing Table")
+    st.dataframe(ageing_df[[client_col, invoice_col, amount_col, date_col, "Days Pending"]])
+
+    # Display bar chart (Fixed X-axis + Styled)
+    st.markdown("### 📊 Ageing Graph")
+    chart_df = ageing_df.copy()
+    chart_df[invoice_col] = chart_df[invoice_col].astype(str)
+
+    import plotly.express as px
+
+    fig = px.bar(
+        chart_df,
+        x=invoice_col,
+        y="Days Pending",
+        text="Days Pending",
+        title="Pending Days by Invoice",
+    )
+
+    fig.update_traces(
+        textposition="outside",
+        marker_color="#B2FFFF",
+    )
+
+    fig.update_layout(
+        xaxis=dict(
+            fixedrange=True,
+            color="white",
+            showgrid=True,
+            gridcolor="rgba(255,255,255,0.2)",
+        ),
+        yaxis=dict(
+            fixedrange=True,
+            color="white",
+            showgrid=True,
+            gridcolor="rgba(255,255,255,0.2)",
+        ),
+        height=450,
+        margin=dict(l=40, r=40, t=60, b=80),
+        plot_bgcolor="black",
+        paper_bgcolor="#0e1117",
+        font=dict(color="white", size=14),
+        title=dict(x=0.35, font=dict(size=20, color="#B2FFFF")),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 # --- Email Actions Sidebar ---
 if client_col and st.session_state.stored_data is not None:
