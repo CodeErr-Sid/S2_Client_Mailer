@@ -187,10 +187,11 @@ if st.session_state.stored_data is not None:
     df = st.session_state.stored_data.copy()
 
     # Columns
-    paid_col = next((col for col in df.columns if "status" in col.lower() or "payment" in col.lower()), None)
-    amount_col = next((col for col in df.columns if "amount" in col.lower() or "total" in col.lower() or "due" in col.lower()), None)
+    paid_col = next((col for col in df.columns if "paid" in col.lower()), None)
+    due_col = next((col for col in df.columns if "due" in col.lower()), None)
+    amount_col = next((col for col in df.columns if any(x in col.lower() for x in ["amount", "total", "value"])), None)
     date_col = next((col for col in df.columns if "date" in col.lower() or "raised" in col.lower()), None)
-    client_col = next((col for col in df.columns if "client name" in col.lower()), None)  # Using client mail as client_col
+    client_col = next((col for col in df.columns if "client name" in col.lower()), None)
     approver_mail_col = next((col for col in df.columns if "approver mail" in col.lower()), None)
     client_mail_col = next((col for col in df.columns if "client mail" in col.lower()), None)
     cc_mail_col = next((col for col in df.columns if "cc" in col.lower()), None)
@@ -201,21 +202,36 @@ if st.session_state.stored_data is not None:
     selected_client = st.selectbox("Select Client", client_options)
     df_filtered = df[df[client_col] == selected_client] if selected_client != "All Clients" else df.copy()
 
-    # Metrics
-    if paid_col:
-        paid_df = df_filtered[df_filtered[paid_col].astype(str).str.lower().str.contains("paid")]
-        unpaid_df = df_filtered[~df_filtered[paid_col].astype(str).str.lower().str.contains("paid")]
-    else:
-        paid_df = pd.DataFrame()
-        unpaid_df = df_filtered
+# --- Metrics ---
+if paid_col:
+    # Convert Paid column to numeric (handle text safely)
+    df_filtered[paid_col] = pd.to_numeric(df_filtered[paid_col], errors="coerce").fillna(0)
 
-    st.markdown("### 📈 Dashboard Summary")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("🧾 Total Clients", df[client_col].nunique() if client_col else len(df))
-    col2.metric("📄 Total Invoices", len(df_filtered))
-    col3.metric("✅ Paid", len(paid_df))
-    col4.metric("⚠️ Pending", len(unpaid_df))
-    col5.metric("💰 Total Due", unpaid_df[amount_col].sum() if amount_col else 0)
+    # Use Paid column: 0 = Not Paid, >0 = Paid
+    paid_df = df_filtered[df_filtered[paid_col] > 0]
+    unpaid_df = df_filtered[df_filtered[paid_col] == 0]
+
+# If there's also a Due column, double-check with it
+elif "due" in df.columns.str.lower().tolist():
+    due_col = next((col for col in df.columns if "due" in col.lower()), None)
+    df_filtered[due_col] = pd.to_numeric(df_filtered[due_col], errors="coerce").fillna(0)
+
+    # If Due = 0, it's paid; if Due > 0, pending
+    paid_df = df_filtered[df_filtered[due_col] == 0]
+    unpaid_df = df_filtered[df_filtered[due_col] > 0]
+
+else:
+    paid_df = pd.DataFrame()
+    unpaid_df = df_filtered
+
+# --- Dashboard Summary ---
+st.markdown("### 📈 Dashboard Summary")
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("🧾 Total Clients", df[client_col].nunique() if client_col else len(df))
+col2.metric("📄 Total Invoices", len(df_filtered))
+col3.metric("✅ Paid", len(paid_df))
+col4.metric("⚠️ Pending", len(unpaid_df))
+col5.metric("💰 Total Due", unpaid_df[due_col].sum() if due_col else 0)
 
 import plotly.express as px
 
@@ -233,6 +249,7 @@ if unpaid_df.shape[0] > 0 and date_col:
     st.markdown("### 📊 Ageing Graph")
     chart_df = ageing_df.copy()
     chart_df[invoice_col] = chart_df[invoice_col].astype(str)
+    
 
     import plotly.express as px
 
@@ -262,7 +279,7 @@ if unpaid_df.shape[0] > 0 and date_col:
             showgrid=True,
             gridcolor="rgba(255,255,255,0.2)",
         ),
-        height=450,
+        height=480,
         margin=dict(l=40, r=40, t=60, b=80),
         plot_bgcolor="black",
         paper_bgcolor="#0e1117",
