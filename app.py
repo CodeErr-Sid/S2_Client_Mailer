@@ -77,7 +77,8 @@ if "logged_in" not in st.session_state:
 
 # --- Page Config ---
 st.set_page_config(page_title="Invoice Tracker", layout="wide")
-st.title("📊 Invoice Tracker Dashboard")
+st.title("📜 S2 Inv Receivable's")
+
 
 # --- Folders and Files ---
 DATA_FOLDER = "data"
@@ -111,15 +112,15 @@ if os.path.exists(CREDENTIALS_FILE):
             st.session_state.sender_password = lines[1]
 
 # --- Top-right key icon for credentials ---
-col1, col2, col3 = st.columns([0.95, 0.02, 0.03])
+col1, col2, col3 = st.columns([0.2, 0.02, 0.02])
 with col3:
     if st.button("🔑"):
         st.session_state.show_sender_modal = not st.session_state.show_sender_modal
 
 if st.session_state.show_sender_modal:
     with st.container():
-        st.markdown("<div style='width:auto; max-width:400px; padding:10px; border:1px solid #ddd; border-radius:8px;'>", unsafe_allow_html=True)
-        sender_email_input = st.text_input("Sender Email (your company)", st.session_state.sender_email)
+        st.markdown("<div style='display: none;'>", unsafe_allow_html=True)
+        sender_email_input = st.text_input("Sender Email", st.session_state.sender_email)
         sender_password_input = st.text_input("Password / App Password", st.session_state.sender_password, type="password")
         col_save, col_close = st.columns(2)
         with col_save:
@@ -225,7 +226,7 @@ else:
     unpaid_df = df_filtered
 
 # --- Dashboard Summary ---
-st.markdown("### 📈 Dashboard Summary")
+st.markdown("## 🏠︎ Dashboard Summary")
 col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("🧾 Total Clients", df[client_col].nunique() if client_col else len(df))
 col2.metric("📄 Total Invoices", len(df_filtered))
@@ -242,11 +243,11 @@ if unpaid_df.shape[0] > 0 and date_col:
     ageing_df["Days Pending"] = (datetime.now() - ageing_df[date_col]).dt.days
 
     # Display table
-    st.markdown("### ⏳ Ageing Table")
+    st.markdown("### ⊞ Ageing Table")
     st.dataframe(ageing_df[[client_col, invoice_col, amount_col, date_col, "Days Pending"]])
 
     # Display bar chart (Fixed X-axis + Styled)
-    st.markdown("### 📊 Ageing Graph")
+    st.markdown("### ☰ Ageing Graph")
     chart_df = ageing_df.copy()
     chart_df[invoice_col] = chart_df[invoice_col].astype(str)
     
@@ -289,30 +290,105 @@ if unpaid_df.shape[0] > 0 and date_col:
 
     st.plotly_chart(fig, use_container_width=True)
 
+# --- Pie Chart: Pending Invoices by Client ---
+if unpaid_df.shape[0] > 0 and client_col:
+    st.markdown("### ◔ Pending Invoices by Client")
+    
+    # Group pending invoices by client
+    pending_by_client = unpaid_df.groupby(client_col).size().reset_index(name="Pending Count")
+    
+    fig_client_pie = px.pie(
+        pending_by_client,
+        names=client_col,
+        values="Pending Count",
+        title="Pending Invoices Distribution by Client",
+        hole=0.4,  # donut style
+    )
+    
+    # Customize colors dynamically
+    fig_client_pie.update_traces(
+        textinfo="percent+label",
+        textfont_size=14,
+        marker=dict(line=dict(color='#0d1117', width=2))
+    )
+    
+    fig_client_pie.update_layout(
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        font=dict(color="white"),
+        title=dict(x=0.35, font=dict(size=20, color="#B2FFFF")),
+    )
+    
+    st.plotly_chart(fig_client_pie, use_container_width=True)
+
+
+    # --- Pie Chart: Paid vs Pending ---
+if len(paid_df) > 0 or len(unpaid_df) > 0:
+    st.markdown("### ◔ Invoice Status Breakdown")
+
+    pie_data = pd.DataFrame({
+        "Status": ["Paid", "Pending"],
+        "Count": [len(paid_df), len(unpaid_df)]
+    })
+
+    fig_pie = px.pie(
+        pie_data,
+        names="Status",
+        values="Count",
+        title="Paid vs Pending Invoices",
+        hole=0.4,  # donut style
+        color="Status",
+        color_discrete_map={"Paid": "#00C851", "Pending": "#FF4444"},
+    )
+
+    fig_pie.update_traces(textinfo="percent+label", textfont_size=14)
+    fig_pie.update_layout(
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        font=dict(color="white"),
+        title=dict(x=0.35, font=dict(size=20, color="#B2FFFF")),
+    )
+
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+
 # --- Email Actions Sidebar ---
 if client_col and st.session_state.stored_data is not None:
     st.sidebar.markdown("### 📧 Email Actions")
     selected_client_name = st.sidebar.selectbox(
         "Select Client for Email",
-        sorted(df[client_col].dropna().unique().tolist())
+        sorted(df[client_col].dropna().unique().tolist()),
+        key="client_selector"
     )
-    client_invoices = df[df[client_col] == selected_client_name]
 
-    # Unpaid invoices
-    unpaid_invoices = client_invoices[
-        ~client_invoices[paid_col].astype(str).str.lower().str.contains("paid")
-    ] if paid_col else client_invoices
-    num_unpaid = len(unpaid_invoices)
-    total_due = unpaid_invoices[amount_col].sum() if amount_col and num_unpaid > 0 else 0
+    # Filter client data
+    client_invoices = df[df[client_col] == selected_client_name].copy()
 
-    # Build a neatly formatted HTML email
+    # Convert Due column to numeric and filter where Due > 0
+    if due_col:
+        client_invoices[due_col] = pd.to_numeric(client_invoices[due_col], errors="coerce").fillna(0)
+        due_invoices = client_invoices[client_invoices[due_col] > 0]
+    else:
+        due_invoices = client_invoices
+
+    num_due = len(due_invoices)
+    total_due = due_invoices[amount_col].sum() if amount_col and num_due > 0 else 0
+
+    # Build HTML table for due invoices
     invoice_rows = ""
-    for idx, row in unpaid_invoices.iterrows():
-        invoice_num = row[invoice_col] if invoice_col else row.name + 1
-        amount_val = f"${row[amount_col]:,.2f}" if amount_col else "N/A"
-        invoice_date_val = row[date_col].strftime("%Y-%m-%d") if date_col else "N/A"
-        days_pending = (datetime.now() - pd.to_datetime(row[date_col], errors='coerce')).days if date_col else "N/A"
-
+    for _, row in due_invoices.iterrows():
+        invoice_num = row[invoice_col] if invoice_col else "-"
+        amount_val = f"₹{row[amount_col]:,.2f}" if amount_col else "-"
+        invoice_date_val = (
+            row[date_col].strftime("%Y-%m-%d")
+            if pd.notnull(row[date_col])
+            else "-"
+        )
+        days_pending = (
+            (datetime.now() - pd.to_datetime(row[date_col], errors="coerce")).days
+            if pd.notnull(row[date_col])
+            else "-"
+        )
         invoice_rows += f"""
         <tr>
             <td>{invoice_num}</td>
@@ -322,13 +398,15 @@ if client_col and st.session_state.stored_data is not None:
         </tr>
         """
 
+    # Create email body
     auto_message = f"""
     <html>
-    <body>
-    <p>Dear {selected_client_name},</p>
+    <body style="font-family: Arial, sans-serif;">
+    <p>Dear Sir/Mam,</p>
     <p>Please find below your pending invoices:</p>
-    <table border="1" cellpadding="5" cellspacing="0">
-        <thead>
+
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+        <thead style="background-color: #f0f0f0;">
             <tr>
                 <th>Invoice #</th>
                 <th>Amount</th>
@@ -340,37 +418,77 @@ if client_col and st.session_state.stored_data is not None:
             {invoice_rows}
         </tbody>
     </table>
-    <p><strong>Total Invoices Pending:</strong> {num_unpaid}<br>
-    <strong>Total Amount Due:</strong> ${total_due:,.2f}</p>
-    <p>Kindly arrange the payments at the earliest.</p>
-    <p>Thanks!</p>
+
+    <ul style="margin-top: 10px;">
+        <li><strong>No. of Due Invoices:</strong> {num_due}</li>
+        <li><strong>Total Amount Due:</strong> ₹{total_due:,.2f}</li>
+    </ul>
+
+    <p>Kindly arrange the payments at the earliest convenience.</p>
+    <p>Thanks & Regards,<br>S2 Integrators</p>
     </body>
     </html>
     """
 
-    email_subject = "Pending Invoice Payments | S2 Integrators"
-    st.sidebar.text_input("Email Subject", value=email_subject, key="email_subject")
-    st.sidebar.text_area("Email Message (HTML)", value=auto_message, height=300, key="email_message")
+    # Dynamic subject for each client
+    email_subject = f"{selected_client_name} - Pending Invoice Payment | S2 Integrators Pvt Ltd"
+
+    # 🟢 Reset the text fields each time a different client is selected
+    st.session_state.email_subject = email_subject
+    st.session_state.email_message = auto_message
+
+    # Use unique keys that depend on selected_client_name to force refresh
+    subject_input = st.sidebar.text_input(
+        "Email Subject",
+        value=st.session_state.email_subject,
+        key=f"email_subject_{selected_client_name}"
+    )
+
+# --- Email Message Section ---
+st.sidebar.markdown("## 💬 Email Message")
+
+# 1️⃣ Collapsible section for editing HTML (closed by default)
+with st.sidebar.expander("✏️ Edit Email (HTML Code)", expanded=False):
+    message_input = st.text_area(
+        "Email Message (HTML)",
+        value=st.session_state.email_message,
+        height=300,
+        key=f"email_message_{selected_client_name}"
+    )
+
+# 2️⃣ Collapsible section for formatted preview (open by default)
+# with st.sidebar.expander("👁️ Preview Formatted Email", expanded=True):
+#     st.markdown(st.session_state.email_message, unsafe_allow_html=True)
+
+
+# 🪄 Live HTML preview right below
+with st.sidebar.expander("👁️ Preview Formatted Email", expanded=True):
+    st.markdown(message_input, unsafe_allow_html=True)
 
     client_email = client_invoices[client_mail_col].iloc[0] if client_mail_col else None
     cc_email = client_invoices[cc_mail_col].iloc[0] if cc_mail_col else None
 
-    st.sidebar.markdown("### 📨 Send to Client")
-    if st.sidebar.button("📤 Send Email to Client"):
+# --- Send button ---
+st.sidebar.markdown("## ᯓ➤ Send Mail to Client")
+
+# Disable button if no dues
+if num_due == 0 or total_due == 0:
+    st.sidebar.warning("✅ No pending invoices for this client. Email not required.")
+else:
+    if st.sidebar.button("🚀 Send Now"):
         if not st.session_state.sender_email or not st.session_state.sender_password:
             st.sidebar.warning("⚠️ Please set sender credentials!")
         elif client_email:
-            # Modify send_email to handle HTML content
             def send_email_html(sender_email, sender_password, to_email, subject, html_body, cc=None):
                 msg = EmailMessage()
-                msg['Subject'] = subject
-                msg['From'] = sender_email
-                msg['To'] = to_email
+                msg["Subject"] = subject
+                msg["From"] = sender_email
+                msg["To"] = to_email
                 if cc:
-                    msg['Cc'] = cc
-                msg.add_alternative(html_body, subtype='html')
+                    msg["Cc"] = cc
+                msg.add_alternative(html_body, subtype="html")
                 try:
-                    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
                         smtp.login(sender_email, sender_password)
                         smtp.send_message(msg)
                     return True, "Email sent successfully!"
@@ -381,13 +499,14 @@ if client_col and st.session_state.stored_data is not None:
                 st.session_state.sender_email,
                 st.session_state.sender_password,
                 client_email,
-                st.session_state.email_subject,
-                st.session_state.email_message,
+                subject_input,
+                message_input,
                 cc=cc_email
             )
+
             if success:
                 st.sidebar.success(f"✅ Email sent to {client_email}")
             else:
                 st.sidebar.error(f"❌ Failed to send email: {msg}")
-# 
-
+        else:
+            st.sidebar.error("⚠️ Client email address not found.")
