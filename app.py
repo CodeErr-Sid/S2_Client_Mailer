@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 import pandas as pd
 import os
 from pathlib import Path
@@ -59,8 +60,8 @@ if "logged_in" not in st.session_state:
     with st.container():
         st.markdown('<div class="login-container">', unsafe_allow_html=True)
 
-        # ✅ Display Local Image
-        st.image(str(logo_path), width=90, use_container_width=False)
+        # ✅ Display Local Image (removed deprecated param)
+        st.image(str(logo_path), width=90)
 
         st.markdown('<div class="login-title">🔐 Login to Continue!</div>', unsafe_allow_html=True)
         password = st.text_input("Enter Password", type="password", label_visibility="collapsed")
@@ -86,11 +87,12 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 DATA_FILE = os.path.join(DATA_FOLDER, "last_uploaded.xlsx")
 TIME_FILE = os.path.join(DATA_FOLDER, "upload_time.txt")
 CREDENTIALS_FILE = os.path.join(DATA_FOLDER, "sender_credentials.txt")
+CLIENT_EMAIL_FILE = os.path.join(DATA_FOLDER, "client_emails.json")
 
 # change by sid
-
-sender_email = st.secrets["sender_email"]
-sender_password = st.secrets["sender_password"]
+# (you already have these in st.secrets — kept as-is)
+sender_email = st.secrets.get("sender_email", "")
+sender_password = st.secrets.get("sender_password", "")
 
 
 # --- Session State Defaults ---
@@ -111,12 +113,7 @@ if os.path.exists(CREDENTIALS_FILE):
             st.session_state.sender_email = lines[0]
             st.session_state.sender_password = lines[1]
 
-# --- Top-right key icon for credentials ---
-col1, col2, col3 = st.columns([0.2, 0.02, 0.02])
-with col3:
-    if st.button("🔑"):
-        st.session_state.show_sender_modal = not st.session_state.show_sender_modal
-
+# --- Top-right sender credentials modal toggle (kept UI simple) ---
 if st.session_state.show_sender_modal:
     with st.container():
         st.markdown("<div style='display: none;'>", unsafe_allow_html=True)
@@ -134,6 +131,103 @@ if st.session_state.show_sender_modal:
             if st.button("❌ Close", key="close_credentials"):
                 st.session_state.show_sender_modal = False
         st.markdown("</div>", unsafe_allow_html=True)
+
+
+# --- Load Client Emails safely ---
+# Ensure session_state key exists and has the right structure
+if "client_emails" not in st.session_state or not isinstance(st.session_state.client_emails, dict):
+    st.session_state.client_emails = {"cc_email": "", "clients": {}}
+else:
+    # guarantee subkeys exist
+    st.session_state.client_emails.setdefault("cc_email", "")
+    st.session_state.client_emails.setdefault("clients", {})
+
+# Try to load from file if it exists
+if os.path.exists(CLIENT_EMAIL_FILE):
+    try:
+        with open(CLIENT_EMAIL_FILE, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if content:
+                try:
+                    loaded = json.loads(content)
+                    # Ensure loaded structure is correct
+                    if isinstance(loaded, dict):
+                        loaded.setdefault("cc_email", "")
+                        loaded.setdefault("clients", {})
+                        st.session_state.client_emails = loaded
+                except json.JSONDecodeError:
+                    # File corrupted or empty: reset (do not crash)
+                    st.session_state.client_emails = {"cc_email": "", "clients": {}}
+            else:
+                # empty file
+                st.session_state.client_emails = {"cc_email": "", "clients": {}}
+    except Exception:
+        st.session_state.client_emails = {"cc_email": "", "clients": {}}
+
+# --- Top-right Icons (existing + logout) ---
+col1, col2, col3, col4, = st.columns([0.2, 0.02, 0.02, 0.02,])
+
+with col3:
+    if st.button("⛯", key="sender_key_btn"):
+        st.session_state.show_sender_modal = not st.session_state.show_sender_modal
+
+with col4:
+    if st.button("✉︎", key="client_email_btn"):
+        st.session_state.show_client_email_modal = not st.session_state.get("show_client_email_modal", False)
+
+
+# --- Client Email Configuration Modal ---
+if st.session_state.get("show_client_email_modal", False):
+    with st.container():
+        # Visible styled card
+        st.markdown("""
+            <div>
+        """, unsafe_allow_html=True)
+        st.markdown("### 📧 Client Email Configurator")
+        st.markdown("Add or edit client email IDs here once — they’ll auto-fill for emails.")
+
+        # CC Mail
+        cc_mail_input = st.text_input("Global CC Email", value=st.session_state.client_emails.get("cc_email", ""), key="cc_email_input")
+
+        # Client Mail Inputs
+        if st.session_state.get("stored_data", None) is not None:
+            df_clients = st.session_state.stored_data
+            client_col = next((col for col in df_clients.columns if "client name" in col.lower()), None)
+            if client_col:
+                unique_clients = sorted(df_clients[client_col].dropna().unique().tolist())
+                st.markdown("#### ✉️ Clients & Emails")
+                # ensure clients dict exists
+                st.session_state.client_emails.setdefault("clients", {})
+                for client in unique_clients:
+                    prev_email = st.session_state.client_emails["clients"].get(client, "")
+                    # Use st.text_input to allow editing; update the dict after input
+                    new_val = st.text_input(f"{client}", value=prev_email, key=f"client_email_{client}")
+                    st.session_state.client_emails["clients"][client] = new_val
+            else:
+                st.warning("⚠️ No 'Client Name' column found in Excel.")
+        else:
+            st.info("📂 Upload Excel first to load clients.")
+
+        # Save button
+        col_save, col_close = st.columns(2)
+        with col_save:
+            if st.button("💾 Save All", key="save_client_emails"):
+                # Make sure the keys exist
+                st.session_state.client_emails["cc_email"] = cc_mail_input or ""
+                st.session_state.client_emails.setdefault("clients", {})
+                # Write to file
+                try:
+                    with open(CLIENT_EMAIL_FILE, "w", encoding="utf-8") as f:
+                        json.dump(st.session_state.client_emails, f, indent=4, ensure_ascii=False)
+                    st.success("✅ Client emails saved successfully!")
+                except Exception as e:
+                    st.error(f"❌ Failed to save client emails: {e}")
+        with col_close:
+            if st.button("❌ Close", key="close_client_email_modal"):
+                st.session_state.show_client_email_modal = False
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
 
 # --- Email Sending Function ---
 def send_email(sender_email, sender_password, to_email, subject, body, cc=None):
@@ -173,15 +267,6 @@ if uploaded_file:
         f.write(current_time)
     st.session_state.last_uploaded_time = current_time
     st.success("✅ File uploaded and saved successfully!")
-
-# --- Refresh Button ---
-# if st.button("🔄 Refresh Data"):
-#     if os.path.exists(DATA_FILE):
-#         df = pd.read_excel(DATA_FILE)
-#         st.session_state.stored_data = df
-#         st.success("✅ Data refreshed successfully!")
-#     else:
-#         st.warning("⚠️ No saved file found to refresh!")
 
 # --- Main Dashboard ---
 if st.session_state.stored_data is not None:
@@ -226,7 +311,7 @@ else:
     unpaid_df = df_filtered
 
 # --- Dashboard Summary ---
-st.markdown("## 🏠︎ Dashboard Summary")
+st.markdown("## 𓃑 Dashboard Summary")
 col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("🧾 Total Clients", df[client_col].nunique() if client_col else len(df))
 col2.metric("📄 Total Invoices", len(df_filtered))
@@ -244,15 +329,12 @@ if unpaid_df.shape[0] > 0 and date_col:
 
     # Display table
     st.markdown("### ⊞ Ageing Table")
-    st.dataframe(ageing_df[[client_col, invoice_col, amount_col, date_col, "Days Pending"]])
+    st.dataframe(ageing_df[[client_col, invoice_col, amount_col, date_col, "Days Pending"]], width="stretch")
 
     # Display bar chart (Fixed X-axis + Styled)
     st.markdown("### ☰ Ageing Graph")
     chart_df = ageing_df.copy()
     chart_df[invoice_col] = chart_df[invoice_col].astype(str)
-    
-
-    import plotly.express as px
 
     fig = px.bar(
         chart_df,
@@ -264,7 +346,7 @@ if unpaid_df.shape[0] > 0 and date_col:
 
     fig.update_traces(
         textposition="outside",
-        marker_color="#B2FFFF",
+        marker_color="#f7941d",
     )
 
     fig.update_layout(
@@ -288,7 +370,8 @@ if unpaid_df.shape[0] > 0 and date_col:
         title=dict(x=0.35, font=dict(size=20, color="#B2FFFF")),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, config={"responsive": True}, key="ageing_chart")
+
 
 # --- Pie Chart: Pending Invoices by Client ---
 if unpaid_df.shape[0] > 0 and client_col:
@@ -319,10 +402,10 @@ if unpaid_df.shape[0] > 0 and client_col:
         title=dict(x=0.35, font=dict(size=20, color="#B2FFFF")),
     )
     
-    st.plotly_chart(fig_client_pie, use_container_width=True)
+    st.plotly_chart(fig_client_pie, config={"responsive": True}, key="pending_client_chart")
 
 
-    # --- Pie Chart: Paid vs Pending ---
+# --- Pie Chart: Paid vs Pending ---
 if len(paid_df) > 0 or len(unpaid_df) > 0:
     st.markdown("### ◔ Invoice Status Breakdown")
 
@@ -349,7 +432,7 @@ if len(paid_df) > 0 or len(unpaid_df) > 0:
         title=dict(x=0.35, font=dict(size=20, color="#B2FFFF")),
     )
 
-    st.plotly_chart(fig_pie, use_container_width=True)
+    st.plotly_chart(fig_pie, config={"responsive": True}, key="status_chart")
 
 
 # --- Email Actions Sidebar ---
@@ -401,12 +484,12 @@ if client_col and st.session_state.stored_data is not None:
     # Create email body
     auto_message = f"""
     <html>
-    <body style="font-family: Arial, sans-serif;">
+    <body style="background-color: none; color: #ffffff;">
     <p>Dear Sir/Mam,</p>
     <p>Please find below your pending invoices:</p>
 
     <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%;">
-        <thead style="background-color: #f0f0f0;">
+        <thead style="background-color: none;">
             <tr>
                 <th>Invoice #</th>
                 <th>Amount</th>
@@ -414,9 +497,8 @@ if client_col and st.session_state.stored_data is not None:
                 <th>Days Pending</th>
             </tr>
         </thead>
-        <tbody>
-            {invoice_rows}
-        </tbody>
+        <tbody>{invoice_rows}</tbody>
+        
     </table>
 
     <ul style="margin-top: 10px;">
@@ -449,24 +531,54 @@ st.sidebar.markdown("## 💬 Email Message")
 
 # 1️⃣ Collapsible section for editing HTML (closed by default)
 with st.sidebar.expander("✏️ Edit Email (HTML Code)", expanded=False):
+    # ensure message_input exists in session_state if not defined earlier
+    try:
+        _ = selected_client_name  # noqa: F841
+    except NameError:
+        selected_client_name = ""
     message_input = st.text_area(
         "Email Message (HTML)",
-        value=st.session_state.email_message,
+        value=st.session_state.get("email_message", ""),
         height=300,
         key=f"email_message_{selected_client_name}"
     )
 
-# 2️⃣ Collapsible section for formatted preview (open by default)
-# with st.sidebar.expander("👁️ Preview Formatted Email", expanded=True):
-#     st.markdown(st.session_state.email_message, unsafe_allow_html=True)
+# 2️⃣ Collapsible section for formatted preview 
+import streamlit.components.v1 as components
 
+with st.sidebar.expander("👁️ Preview Formatted Email", expanded=False):
+    components.html(
+        message_input,
+        height=400,  # adjust height as needed
+        scrolling=True,
+    )
 
-# 🪄 Live HTML preview right below
-with st.sidebar.expander("👁️ Preview Formatted Email", expanded=True):
-    st.markdown(message_input, unsafe_allow_html=True)
+# Resolve client and cc email using stored config first, then Excel fallback
+try:
+    client_name = selected_client_name
+except NameError:
+    client_name = ""
 
-    client_email = client_invoices[client_mail_col].iloc[0] if client_mail_col else None
-    cc_email = client_invoices[cc_mail_col].iloc[0] if cc_mail_col else None
+client_email = None
+cc_email = None
+
+# Use configured client emails if available
+if "client_emails" in st.session_state:
+    client_email = st.session_state.client_emails.get("clients", {}).get(client_name, None)
+    cc_email = st.session_state.client_emails.get("cc_email", None)
+
+# Fallback to Excel values if not set manually
+if not client_email and 'client_mail_col' in locals() and client_mail_col:
+    try:
+        client_email = client_invoices[client_mail_col].iloc[0]
+    except Exception:
+        client_email = None
+if not cc_email and 'cc_mail_col' in locals() and cc_mail_col:
+    try:
+        cc_email = client_invoices[cc_mail_col].iloc[0]
+    except Exception:
+        cc_email = None
+
 
 # --- Send button ---
 st.sidebar.markdown("## ᯓ➤ Send Mail to Client")
