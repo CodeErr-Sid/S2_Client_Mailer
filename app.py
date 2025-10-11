@@ -12,7 +12,7 @@ import requests
 from openpyxl import load_workbook
 
 # --- CONFIG ---
-st.set_page_config(page_title="S2 Client Recievable's", page_icon="🔒", layout="centered")
+st.set_page_config(page_title="S2 Client Recievable's", page_icon=r"assets\s2logo.png", layout="wide")
 
 # --- STYLE ---
 st.markdown("""
@@ -235,7 +235,7 @@ if "logged_in" not in st.session_state:
     st.stop()
 
 # --- Page Config ---
-st.set_page_config(page_title="Invoice Tracker", layout="wide")
+# st.set_page_config(page_title="Invoice Tracker", layout="wide")
 st.title("📜 S2 Inv Receivable's")
 
 # --- Folders and Files ---
@@ -268,24 +268,65 @@ if os.path.exists(CREDENTIALS_FILE):
             st.session_state.sender_email = lines[0]
             st.session_state.sender_password = lines[1]
 
-# --- Top-right sender credentials modal toggle (kept UI simple) ---
+# --- Top-right sender credentials modal toggle ---
+if "show_sender_modal" not in st.session_state:
+    st.session_state.show_sender_modal = False
+if "sender_email_temp" not in st.session_state:
+    st.session_state.sender_email_temp = st.session_state.get("sender_email", "")
+if "sender_password_temp" not in st.session_state:
+    st.session_state.sender_password_temp = st.session_state.get("sender_password", "")
+
+# --- Trigger the modal toggle button ---
 if st.session_state.show_sender_modal:
     with st.container():
-        st.markdown("<div style='display: none;'>", unsafe_allow_html=True)
-        sender_email_input = st.text_input("Sender Email", st.session_state.sender_email)
-        sender_password_input = st.text_input("Password / App Password", st.session_state.sender_password, type="password")
+        st.markdown("### ✉️ Configure Sender Credentials")
+
+        # These fields persist across reruns
+        st.session_state.sender_email_temp = st.text_input(
+            "Sender Email",
+            value=st.session_state.sender_email_temp,
+            placeholder="example@gmail.com",
+            key="sender_email_input"
+        )
+
+        st.session_state.sender_password_temp = st.text_input(
+            "Password / App Password",
+            value=st.session_state.sender_password_temp,
+            type="password",
+            placeholder="Enter your Gmail App Password",
+            key="sender_password_input"
+        )
+
         col_save, col_close = st.columns(2)
+
         with col_save:
-            if st.button("💾 Save Credentials", key="save_credentials"):
-                st.session_state.sender_email = sender_email_input
-                st.session_state.sender_password = sender_password_input
-                with open(CREDENTIALS_FILE, "w") as f:
-                    f.write(f"{sender_email_input}\n{sender_password_input}")
-                st.success("✅ Sender credentials saved!")
+            if st.button("💾 Save Credentials", key="save_credentials_btn"):
+                st.session_state.sender_email = st.session_state.sender_email_temp.strip()
+                st.session_state.sender_password = st.session_state.sender_password_temp.strip()
+
+                # Save to file
+                try:
+                    with open(CREDENTIALS_FILE, "w") as f:
+                        f.write(f"{st.session_state.sender_email}\n{st.session_state.sender_password}")
+                    success_box = st.empty()
+                    # success_box.success("")
+                    st.toast(f"Sender credentials saved successfully!", icon="✅")
+                    import time
+                    time.sleep(1.5)
+                    success_box.empty()
+                except Exception as e:
+                    st.error(f"❌ Failed to save credentials: {e}")
+
         with col_close:
-            if st.button("❌ Close", key="close_credentials"):
+            if st.button("❌ Close", key="close_credentials_btn"):
                 st.session_state.show_sender_modal = False
-        st.markdown("</div>", unsafe_allow_html=True)
+else:
+    # Show button to open modal (outside the modal logic)
+    if st.button("🔑 Modify Sender"):
+        st.session_state.show_sender_modal = True
+        st.rerun()
+
+
 
 # --- Load Client Emails safely ---
 if "client_emails" not in st.session_state or not isinstance(st.session_state.client_emails, dict):
@@ -312,16 +353,18 @@ if os.path.exists(CLIENT_EMAIL_FILE):
     except Exception:
         st.session_state.client_emails = {"cc_email": "", "clients": {}}
 
-# --- Top-right Icons (existing + logout) ---
-col1, col2, col3, col4, = st.columns([0.2, 0.02, 0.02, 0.02,])
+# --- Top-right buttons for Sender + Client Email ---
+col1, col2 = st.columns([0.3, 0.3])
 
-with col3:
-    if st.button("⛯", key="sender_key_btn"):
-        st.session_state.show_sender_modal = not st.session_state.show_sender_modal
+# with col1:
+#     if st.button("✉︎ Configure Sender Credentials", key="sender_modal_btn"):
+#         st.session_state.show_sender_modal = True
+#         st.rerun()
 
-with col4:
-    if st.button("✉︎", key="client_email_btn"):
-        st.session_state.show_client_email_modal = not st.session_state.get("show_client_email_modal", False)
+with col1:
+    if st.button("🗝️ Modify Clients", key="client_modal_btn"):
+        st.session_state.show_client_email_modal = True
+        st.rerun()
 
 # --- Client Email Configuration Modal ---
 if st.session_state.get("show_client_email_modal", False):
@@ -356,7 +399,9 @@ if st.session_state.get("show_client_email_modal", False):
                 try:
                     with open(CLIENT_EMAIL_FILE, "w", encoding="utf-8") as f:
                         json.dump(st.session_state.client_emails, f, indent=4, ensure_ascii=False)
-                    st.success("✅ Client emails saved successfully!")
+                    # st.success("")
+                    st.toast(f"Client emails saved successfully!", icon="✅")
+
                 except Exception as e:
                     st.error(f"❌ Failed to save client emails: {e}")
         with col_close:
@@ -407,7 +452,7 @@ manual_rate = st.sidebar.number_input(
 )
 
 # Save rate button
-if st.sidebar.button("💾 Save Exchange Rate"):
+if st.sidebar.button("✅ Save"):
     st.session_state.USD_TO_INR = manual_rate
     with open(RATE_FILE, "w") as f:
         f.write(str(manual_rate))
@@ -511,12 +556,37 @@ else:
     unpaid_df = df_filtered
 
 # --- Dashboard Summary ---
-st.markdown("## 𓃑 Dashboard Summary")
-col1, col2, col3, col4, col5 = st.columns(5)
+st.markdown("## ⌨ Dashboard")
+col1, col2, col3, col4, col5, = st.columns(5)
 col1.metric("🧾 Total Clients", df[client_col].nunique() if client_col else len(df))
 col2.metric("📄 Total Invoices", len(df_filtered))
 col3.metric("✅ Paid", len(paid_df))
 col4.metric("⚠️ Pending", len(unpaid_df))
+
+st.markdown(
+    """
+    <style>
+    .st-emotion-cache-1q82h82 {
+        overflow: visible !important;
+        white-space: normal !important;
+        text-overflow: clip !important;
+        
+    }
+        .st-emotion-cache-efbu8t {
+        background: linear-gradient(90deg, #ff5f6d, #ffc371, #24c6dc, #514a9d);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: bold;       /* optional */
+        font-size: 1.4rem;       /* adjust size if needed */
+        # overflow: visible !important;
+        # white-space: normal !important;
+        # text-overflow: clip !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 
 # --- Total Due (converted to INR) ---
 if due_col:
@@ -578,7 +648,7 @@ if unpaid_df.shape[0] > 0 and date_col:
     st.markdown("### ⊞ Ageing Table")
     st.dataframe(
         ageing_df[[client_col, invoice_col, "Currency", amount_col, date_col, "Days Pending"]],
-        use_container_width=True
+        width="stretch"
     )
 
     st.markdown("### ☰ Ageing Graph")
