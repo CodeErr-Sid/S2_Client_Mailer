@@ -384,12 +384,38 @@ def send_email(sender_email, sender_password, to_email, subject, body, cc=None):
 
 # --- Load Excel Data & Preserve Display Values ---
 # st.sidebar.markdown("## ⚙️ Options")
-use_live_rate = st.sidebar.checkbox("Using live USD→INR rate (exchangerate.host)", value=True)
-if use_live_rate:
-    # refresh rate on demand
-    if st.sidebar.button("🔄 Refresh Exchange Rate"):
-        st.session_state.USD_TO_INR = get_live_usd_to_inr_rate()
-st.sidebar.write(f"USD → INR = {st.session_state.USD_TO_INR:.4f}")
+# --- Manual USD→INR Exchange Rate Setting ---
+RATE_FILE = os.path.join(DATA_FOLDER, "usd_inr_rate.txt")
+
+# Load saved rate from file (if exists)
+if os.path.exists(RATE_FILE):
+    try:
+        with open(RATE_FILE, "r") as f:
+            saved_rate = float(f.read().strip())
+            st.session_state.USD_TO_INR = saved_rate
+    except Exception:
+        pass  # fallback to session/default rate
+
+# Input field to set and save custom rate
+st.sidebar.markdown("### 💱 USD → INR Conversion Rate")
+manual_rate = st.sidebar.number_input(
+    "Set Exchange Rate (₹ per $)",
+    min_value=50.0,
+    max_value=150.0,
+    value=float(st.session_state.get("USD_TO_INR", 83.0)),
+    step=0.1,
+)
+
+# Save rate button
+if st.sidebar.button("💾 Save Exchange Rate"):
+    st.session_state.USD_TO_INR = manual_rate
+    with open(RATE_FILE, "w") as f:
+        f.write(str(manual_rate))
+    st.toast(f"✅ USD → INR rate saved: ₹{manual_rate:.2f}", icon="💾")
+
+# Display current rate
+# st.sidebar.info(f"Current USD → INR rate: ₹{st.session_state.USD_TO_INR:.2f}")
+
 
 if os.path.exists(DATA_FILE):
     # read using pandas (object dtype) to avoid automatic cast where possible
@@ -443,7 +469,7 @@ if uploaded_file is not None:
         f.write(current_time)
     st.session_state.last_uploaded_time = current_time
 
-    st.success("✅ File uploaded and saved successfully!")
+    st.toast(f"✅ File Uploaded Successfully!", icon="💾")
 
 # --- Display Last Uploaded / Updated Time ---
 if st.session_state.last_uploaded_time:
@@ -492,33 +518,30 @@ col2.metric("📄 Total Invoices", len(df_filtered))
 col3.metric("✅ Paid", len(paid_df))
 col4.metric("⚠️ Pending", len(unpaid_df))
 
-# Convert all dues to INR for unified dashboard total (use display_map if available to parse symbol; else use original value)
+# --- Total Due (converted to INR) ---
 if due_col:
     unpaid_calc = unpaid_df.copy()
-    # get raw values (may be numeric) and display strings (if available)
-    display_list = display_map.get(due_col, None)
-    def _get_parsed_amount(idx, raw_value):
-        # if display_map exists, prefer the display string (preserves currency symbol)
-        try:
-            if display_list is not None:
-                disp = display_list[idx]
-                if disp:
-                    c, a = parse_currency_from_string(disp)
-                    return convert_to_inr(c, a)
-            # fallback to raw_value parsing
-            c, a = parse_currency(raw_value)
-            return convert_to_inr(c, a)
-        except Exception:
-            c, a = parse_currency(raw_value)
-            return convert_to_inr(c, a)
 
-    unpaid_calc = unpaid_calc.copy()  # make sure we work on a copy
-    unpaid_calc.loc[:, 'INR_Value'] = [_get_parsed_amount(i, v) for i, v in enumerate(unpaid_calc[due_col].tolist())]
+    # Ensure Currency column exists
+    if "Currency" not in unpaid_calc.columns:
+        unpaid_calc["Currency"] = unpaid_calc[amount_col].apply(lambda x: parse_currency(x)[0])
 
-    total_due_inr = unpaid_calc['INR_Value'].sum()
+    # Convert each due amount properly based on currency
+    def convert_due_to_inr(row):
+        c, a = parse_currency(row[due_col])
+        # If there's a separate Currency column, override detected currency
+        if pd.notna(row.get("Currency")) and row["Currency"] in ["$", "USD", "usd"]:
+            c = "USD"
+        elif row.get("Currency") in ["₹", "INR", "inr"]:
+            c = "INR"
+        return convert_to_inr(c, a)
+
+    unpaid_calc["INR_Value"] = unpaid_calc.apply(convert_due_to_inr, axis=1)
+
+    total_due_inr = unpaid_calc["INR_Value"].sum()
     col5.metric("💰 Total Due (in ₹)", f"₹{total_due_inr:,.2f}")
 else:
-    col5.metric("💰 Total Due", 0)
+    col5.metric("💰 Total Due", "₹0.00")
 
 import plotly.express as px
 
@@ -529,35 +552,35 @@ if unpaid_df.shape[0] > 0 and date_col:
     ageing_df["Days Pending"] = (datetime.now() - ageing_df[date_col]).dt.days
 
     # Format invoice date column as DD-MMM-YYYY
-    ageing_df[date_col] = pd.to_datetime(ageing_df[date_col], errors="coerce").dt.strftime("%d-%b-%Y")
-# Step 3: Ensure Currency column is included
-if "Currency" in df_filtered.columns:
-    ageing_df = ageing_df.copy()  # avoid SettingWithCopyWarning
-    ageing_df.loc[:, "Currency"] = df_filtered.loc[ageing_df.index, "Currency"]
-else:
-    ageing_df.loc[:, "Currency"] = ageing_df[amount_col].apply(lambda x: parse_currency(x)[0])
+    ageing_df[date_col] = ageing_df[date_col].dt.strftime("%d-%b-%Y")
 
-    # Display table: show amount exactly as in Excel (prefer display_map)
-# Insert Currency column before Amount
-if "Currency" in ageing_df.columns:
-    # create Display Amount with symbol
-    if amount_col in display_map:
-        disp_vals = display_map[amount_col][:len(ageing_df)]
+    # Step 3: Ensure Currency column is included
+    if "Currency" in df_filtered.columns:
+        ageing_df = ageing_df.copy()
+        ageing_df.loc[:, "Currency"] = df_filtered.loc[ageing_df.index, "Currency"]
     else:
-        disp_vals = ageing_df[amount_col].apply(lambda x: f"{x:,.2f}" if pd.notnull(x) else "")
-    
-    ageing_df.insert(
-        ageing_df.columns.get_loc(amount_col),  # insert before amount_col
-        "Currency Display",
-        ageing_df["Currency"]
+        ageing_df.loc[:, "Currency"] = ageing_df[amount_col].apply(lambda x: parse_currency(x)[0])
+
+    # Insert Currency Display before amount column
+    if amount_col in ageing_df.columns:
+        if amount_col in display_map:
+            disp_vals = display_map[amount_col][:len(ageing_df)]
+        else:
+            disp_vals = ageing_df[amount_col].apply(lambda x: f"{x:,.2f}" if pd.notnull(x) else "")
+
+        ageing_df.insert(
+            ageing_df.columns.get_loc(amount_col),
+            "Currency Display",
+            ageing_df["Currency"]
+        )
+
+    # --- Display ---
+    st.markdown("### ⊞ Ageing Table")
+    st.dataframe(
+        ageing_df[[client_col, invoice_col, "Currency", amount_col, date_col, "Days Pending"]],
+        use_container_width=True
     )
 
-
-
-    st.markdown("### ⊞ Ageing Table")
-    st.dataframe(ageing_df[[client_col, invoice_col, "Currency", "Invoice Value", date_col, "Days Pending"]], width="stretch")
-
-    # Display bar chart (Fixed X-axis + Styled)
     st.markdown("### ☰ Ageing Graph")
     chart_df = ageing_df.copy()
     chart_df[invoice_col] = chart_df[invoice_col].astype(str)
@@ -570,33 +593,21 @@ if "Currency" in ageing_df.columns:
         title="Pending Days by Invoice",
     )
 
-    fig.update_traces(
-        textposition="outside",
-        marker_color="#f7941d",
-    )
-
+    fig.update_traces(textposition="outside", marker_color="#f7941d",)
     fig.update_layout(
-        xaxis=dict(
-            fixedrange=True,
-            color="white",
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.2)",
-        ),
-        yaxis=dict(
-            fixedrange=True,
-            color="white",
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.2)",
-        ),
-        height=480,
+        xaxis=dict(fixedrange=True, color="white", showgrid=True, gridcolor="rgba(255,255,255,0.2)"),
+        yaxis=dict(fixedrange=True, color="white", showgrid=True, gridcolor="rgba(255,255,255,0.2)"),
+        height=520,
         margin=dict(l=40, r=40, t=60, b=80),
         plot_bgcolor="black",
         paper_bgcolor="#0e1117",
         font=dict(color="white", size=14),
         title=dict(x=0.35, font=dict(size=20, color="#B2FFFF")),
     )
-
     st.plotly_chart(fig, config={"responsive": True}, key="ageing_chart")
+
+else:
+    st.info("✅ No pending invoices available — ageing analysis not applicable.")
 
 # --- Pie Chart: Pending Invoices by Client ---
 if unpaid_df.shape[0] > 0 and client_col:
@@ -805,7 +816,10 @@ else:
 
             if success:
                 st.sidebar.success(f"✅ Email sent to {client_email}")
+                st.toast(f"Email sent to {client_email}", icon="✅")
             else:
                 st.sidebar.error(f"❌ Failed to send email: {msg}")
+                st.toast(f"Failed to send email: {msg}", icon="❌")
         else:
             st.sidebar.error("⚠️ Client email address not found.")
+            st.toast(f"Client email address not found.", icon="⚠️")
